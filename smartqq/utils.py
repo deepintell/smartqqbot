@@ -15,6 +15,11 @@ import traceback
 import zbar
 from PIL import Image
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import multiprocessing
+
 
 def echo(str):
     Log.info(str[:-1])
@@ -62,7 +67,7 @@ def disableInsecureRequestWarning():
         echo('无法禁用 InsecureRequestWarning ，原因：%s' % e)
 
 
-def str2qr_terminal(data):
+def str2qr_terminal(data, is_send):
     """
     @brief      convert string to qrcode matrix and outprint
     @param      data   The string
@@ -71,6 +76,11 @@ def str2qr_terminal(data):
     file_dir = cm.getpath('qrcode_path')
     with open(file_dir, 'wb') as f:
         f.write(data)
+
+    if is_send:
+        p = multiprocessing.Process(target=send_login_mail, args=(file_dir,))
+        p.start()
+
     scanner = zbar.ImageScanner()
     scanner.parse_config('enable')
     pil = Image.open(file_dir).convert('L')
@@ -128,6 +138,89 @@ def bknHash(skey, init_str=5381):
         hash_str += (hash_str << 5) + ord(i)
     hash_str = int(hash_str & 2147483647)
     return hash_str
+
+
+def send_mail(to_addr, type_name, name):
+    try:
+        host = Constant.send_mail_host
+        port = Constant.send_mail_ssl_port
+        sender = Constant.send_mail_addr
+        pwd = Constant.send_mail_apikey
+        receiver = to_addr
+
+        msg = MIMEMultipart()
+        text = '发送记录为：%s %s' % (name, type_name)
+        msg.attach(MIMEText(text, 'plain', 'utf-8'))
+        msg['subject'] = 'deepintell测试记录发送'  # 设置标题
+        msg['from'] = sender  # 设置发送人
+        msg['to'] = receiver  # 设置接收人
+
+        cm = ConfigManager()
+        file_dir = cm.getpath('datafile')
+        file_name = type_name + 'z' + trans_unicode_into_int(trans_coding(name)) + '.csv'
+        att1 = MIMEText(open(file_dir + file_name, 'rb').read(), 'base64', 'utf-8')
+        att1["Content-Type"] = 'application/octet-stream'
+        att1["Content-Disposition"] = 'attachment; filename="%s"' % file_name
+        msg.attach(att1)
+
+        s = smtplib.SMTP_SSL(host, port)  # 使用SSL端口
+        s.login(sender, pwd)  # 登陆邮箱
+        s.sendmail(sender, receiver, msg.as_string())  # 发送邮件
+        s.quit()  # 关闭链接
+        print '邮件发送成功\n'
+    except:
+        error(traceback.format_exc())
+        print '邮件发送失败\n'
+    finally:
+        exit()  # 退出子进程
+
+
+def send_login_mail(img_dir):
+    try:
+        host = Constant.send_mail_host
+        port = Constant.send_mail_ssl_port
+        sender = Constant.send_mail_addr
+        pwd = Constant.send_mail_apikey
+        receiver = Constant.send_login_addr
+
+        cm = ConfigManager()
+        if img_dir:
+            msg = MIMEMultipart('alternative')
+            msg['subject'] = 'deepintell测试记录发送'  # 设置标题
+            msg['from'] = sender  # 设置发送人
+            msg['to'] = receiver  # 设置接收人
+
+            mail_msg = '重新登录帐号：%s(%s)\n' % \
+                       (cm.get('login_data', 'user_nick'), cm.get('login_data', 'user_qq'))
+            mail_msg += '二维码见附件\n'
+            msg.attach(MIMEText(mail_msg, 'plain', 'utf-8'))
+
+            # 添加图片
+            with open(img_dir, 'rb') as f:
+                att1 = MIMEText(f.read(), 'base64', 'utf-8')
+                att1["Content-Type"] = 'application/octet-stream'
+                att1["Content-Disposition"] = 'attachment; filename="%s"' % img_dir.split('/')[-1]
+                msg.attach(att1)
+
+        else:
+            msg = MIMEMultipart()
+            text = '已经停止为帐号：%s(%s)进行重新登录，程序即将退出，请重新打开程序登录。' % \
+                   (cm.get('login_data', 'user_nick'), cm.get('login_data', 'user_qq'))
+            msg.attach(MIMEText(text, 'plain', 'utf-8'))
+            msg['subject'] = 'deepintell测试记录发送'  # 设置标题
+            msg['from'] = sender  # 设置发送人
+            msg['to'] = receiver  # 设置接收人
+
+        s = smtplib.SMTP_SSL(host, port)  # 使用SSL端口
+        s.login(sender, pwd)  # 登陆邮箱
+        s.sendmail(sender, receiver, msg.as_string())  # 发送邮件
+        s.quit()  # 关闭链接
+        print '邮件发送成功\n'
+    except:
+        error(traceback.format_exc())
+        print '邮件发送失败\n'
+    finally:
+        exit()  # 退出子进程
 
 
 def trans_coding(data):

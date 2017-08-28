@@ -10,6 +10,7 @@ import os
 import time
 import csv
 import traceback
+import multiprocessing
 
 
 class QQMsgHandler(object):
@@ -76,6 +77,71 @@ class QQMsgHandler(object):
             elif cmd['func'] == 'check_time':
                 add_reply['text'] = self.smartqq.get_run_time()
                 add_reply['to_id'] = cmd['to_id']
+                self.smartqq.ReplyList.append(add_reply)
+
+            elif cmd['func'] == 'help_person':
+                add_reply['text'] = ''
+                add_reply['text'] += '命令列表：' + '\n'
+                add_reply['text'] += '0.-help 查看帮助' + '\n'
+                add_reply['text'] += '1.runtime 查看运行时间' + '\n'
+                add_reply['text'] += '2.check_record_count 查看当前窗口记录最大序号' + '\n'
+                add_reply['text'] += '3.check_record_\d+{记录序号} 查看某条记录' + '\n'
+                add_reply['text'] += '4.check_group 查看bot所加群' + '\n'
+                add_reply['text'] += '5.check_group_\d+{群序号}_count 查看某群记录最大序号' + '\n'
+                add_reply['text'] += '6.check_group_\d+{群序号}_\d+{记录序号} 查看某群某条记录' + '\n'
+                add_reply['text'] += '7.output_group_\d+{群序号} 输出某群记录到本地文件' + '\n'
+                add_reply['text'] += '8.send_group_\d+{群序号}_\{邮箱} 发送记录文件，支持.com结尾的邮箱' + '\n'
+                add_reply['text'] += '9.clean_table 清除当前窗口记录' + '\n'
+                add_reply['to_id'] = cmd['to_id']
+                self.smartqq.ReplyList.append(add_reply)
+
+            elif cmd['func'] == 'help_discuss':
+                add_reply['text'] = ''
+                add_reply['text'] += '"#" 开头对话不会计入' + '\n'
+                add_reply['text'] += '命令列表：' + '\n'
+                add_reply['text'] += '0.-help 查看帮助' + '\n'
+                add_reply['text'] += '1.runtime 查看运行时间' + '\n'
+                add_reply['text'] += '2.check_record_count 查看当前窗口记录最大序号' + '\n'
+                add_reply['text'] += '3.check_record_\d+{记录序号} 查看某条记录' + '\n'
+                add_reply['text'] += '4.output_csv 输出当前窗口记录到本地文件' + '\n'
+                add_reply['text'] += '5.send_to_\{邮箱} 发送记录文件，支持.com结尾的邮箱' + '\n'
+                add_reply['text'] += '6.clean_table 清除当前窗口记录' + '\n'
+                add_reply['text'] += '7.delete_record_\d+{记录序号} 删除某条记录' + '\n'
+                add_reply['to_id'] = cmd['to_id']
+                self.smartqq.ReplyList.append(add_reply)
+
+            # 发送邮件
+            elif cmd['func'] == 'send_file_group':
+                add_reply['to_id'] = cmd['to_id']
+                if cmd['g_order'] >= len(self.smartqq.group):
+                    add_reply['text'] = '无效编号'
+                else:
+                    p = multiprocessing.Process(target=send_mail, args=(cmd['email_addr'],
+                                                                        'group',
+                                                                        self.smartqq.group[cmd['g_order']]['name']
+                                                                        ))
+                    p.start()
+                    add_reply['text'] = ''
+                    add_reply['text'] += '已经尝试发送，若未收到，原因可能是：' + '\n'
+                    add_reply['text'] += '1.未导出文件，' + '\n'
+                    add_reply['text'] += '2.网络错误，' + '\n'
+                    add_reply['text'] += '3.邮件因安全问题被退回，' + '\n'
+                    add_reply['text'] += '4.邮箱地址错误' + '\n'
+                self.smartqq.ReplyList.append(add_reply)
+            elif cmd['func'] == 'send_file_discuss':
+                add_reply['to_id'] = cmd['to_id']
+                name = trans_int_into_unicode(cmd['table_name'])[1].encode('utf-8')
+                p = multiprocessing.Process(target=send_mail, args=(cmd['email_addr'],
+                                                                    'discuss',
+                                                                    name
+                                                                    ))
+                p.start()
+                add_reply['text'] = ''
+                add_reply['text'] += '已经尝试发送，若未收到，原因可能是：' + '\n'
+                add_reply['text'] += '1.未导出文件，' + '\n'
+                add_reply['text'] += '2.网络错误，' + '\n'
+                add_reply['text'] += '3.邮件因安全问题被退回，' + '\n'
+                add_reply['text'] += '4.邮箱地址错误' + '\n'
                 self.smartqq.ReplyList.append(add_reply)
 
             # 爬取聊天
@@ -183,7 +249,7 @@ class QQMsgHandler(object):
                         person[rec['FromNick']] += 1
                     add_line = []
                     for p in person.keys():
-                        add_line.append(p)
+                        add_line.append(trans_coding(p).encode('gbk', 'ignore'))
                         add_line.append(person[p])
                     datas.append(add_line)
                     out_file = open(file_dir, 'ab+')

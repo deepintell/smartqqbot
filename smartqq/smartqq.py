@@ -54,10 +54,12 @@ class SmartQQ(WebQQApi):
                 login_flag = self.TestLogin()
                 if login_flag:
                     echo('恢复登录成功！\n')
+                    self.send_png = True  # 用于重启登录发送二维码
                 else:
                     echo('恢复登录失败!\n')
             except:
                 error(traceback.format_exc())
+                echo('恢复登录失败!\n')
         if not login_flag:
             run('开始二维码登录\n', self.Login)
 
@@ -75,30 +77,36 @@ class SmartQQ(WebQQApi):
         run('开始拉取群、讨论组成员\n', self.fetch_group_discuss_member)
 
         while True:
+            # 目前对于webqq的返回码并没有完全掌握，如果遇到掉线问题，特别是100001 login error
+            # 如果掉线立刻尝试重新连接，可能会导致意外情况，为了保险起见将会延时1分钟重连
             r = self.PollMsg()
             if 'retcode' in r:
-                self.exit_code = r['retcode']
                 if r['retcode'] == 0:
+                    self.exit_code = 0
                     if 'result' in r and len(r['result']):
                         echo('in handler\n')
                         self.handle_mod(r['result'])
                     else:
-                        print r
-                        time.sleep(0.5)
+                        echo(str(r) + '\n')
                 elif r['retcode'] == 103:
                     self.exit_code = 0
-                    print r
+                    echo(str(r) + '\n')
                     break
                 else:
-                    print r
+                    self.exit_code = 0
+                    echo(str(r) + '\n')
+                    time.sleep(60)  # 当前有封号风险，尝试等待一分钟重连
                     break
+            # 下面情况出现将会直接退出
             elif 'errCode' in r:
-                self.exit_code = r['errCode']
-                print r
+                # 不明情况
+                self.exit_code = 1
+                echo(str(r) + '\n')
                 break
             else:
+                # 更加不明情况
                 self.exit_code = 1
-                print r
+                echo(str(r) + '\n')
                 break
 
     def stop(self):
@@ -164,6 +172,7 @@ class SmartQQ(WebQQApi):
     def fetch_group_discuss_member(self):
         echo('获取群成员\n')
         count = 0
+        self.group_member = {}  # 重置群成员列表
         for g in self.group:
             m_count = 0
             while True:
@@ -189,11 +198,16 @@ class SmartQQ(WebQQApi):
                         self.group_member[g['gid']].append(add_member)
                         m_count += 1
                     break
+                else:
+                    # 一般在与服务器断开链接才会出现
+                    echo('%d:获取群 %s（gid:%s）成员时出错\n' % (count + 1, g['name'], g['gid']))
+                    return False
             count += 1
             echo('%d：获取到群 %s 成员 %d 名\n' % (count, g['name'], m_count))
 
         echo('获取讨论组成员\n')
         count = 0
+        self.discuss_member = {}  # 重置讨论组成员列表
         for d in self.discuss:
             m_count = 0
             while True:
@@ -209,6 +223,10 @@ class SmartQQ(WebQQApi):
                         self.discuss_member[d['did']].append(add_member)
                         m_count += 1
                     break
+                else:
+                    # 一般在与服务器断开链接才会出现
+                    echo('%d:获取讨论组 %s（did:%s）成员时出错\n' % (count + 1, d['name'], d['did']))
+                    return False
             count += 1
             echo('%d：获取到讨论组 %s 成员 %d 名\n' % (count, d['name'], m_count))
 
@@ -336,6 +354,7 @@ class SmartQQ(WebQQApi):
                             self.discuss_member[from_discuss['did']].append(add_member)
                     else:
                         op_flag = False
+                        # 当接收到讨论组文件时将会进入，在其他极端情况下也会进入，目前暂无好的解决方法
                         error('never in can not get discuss info make discuss name unknown\n')
                         from_discuss['name'] = 'unknown_discuss_' + str(value['from_uin'])
                 rmsg['from_discuss'] = from_discuss
@@ -365,8 +384,8 @@ class SmartQQ(WebQQApi):
                         from_user['nick'] = 'unknown_' + str(value['send_uin'])
                 rmsg['from_user'] = from_user
 
+            to_user = {}
             if value['to_uin'] == self.uin:
-                to_user = {}
                 to_user['uin'] = self.uin
                 to_user['nick'] = self.user['nick']
                 to_user['markname'] = ''
@@ -374,7 +393,9 @@ class SmartQQ(WebQQApi):
                 op_flag = False
                 error('never in to uin not my uin\n')
                 # 现在webqq已经无法接收到自己在其他客户端发出的消息了，所以正常不会进入此步骤
+                to_user['uin'] = value['to_uin']
                 to_user['nick'] = 'unknown_' + str(value['to_uin'])
+                to_user['markname'] = ''
             rmsg['to_user'] = to_user
 
             text = self.handle_content(value['content'][1:])
@@ -410,26 +431,33 @@ class SmartQQ(WebQQApi):
             self.msg_handler.msg_db.create_table(table, self.msg_handler.msg_col)
             add_cmd = {}
             add_cmd['type'] = 1
-            if text == 'check_record_count':
+            cmd_text = text.strip()
+            if cmd_text == 'check_record_count':
                 add_cmd['func'] = 'check_count'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['table_name'] = table
                 add_cmd['to_id'] = msg['from_user']['uin']
                 self.CommandList.append(add_cmd)
-            elif re.match(r'^check_record_\d+$', text):
+            elif re.match(r'^check_record_\d+$', cmd_text):
                 add_cmd['func'] = 'check_text'
                 add_cmd['time'] = msg['value']['time']
-                add_cmd['msg_order'] = int(re.sub(r'^check_record_', '', text))
+                add_cmd['msg_order'] = int(re.sub(r'^check_record_', '', cmd_text))
                 add_cmd['table_name'] = table
                 add_cmd['to_id'] = msg['from_user']['uin']
                 self.CommandList.append(add_cmd)
-            elif text == 'runtime':
+            elif cmd_text == 'runtime':
                 add_cmd['func'] = 'check_time'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['to_id'] = msg['from_user']['uin']
                 self.CommandList.append(add_cmd)
+            elif cmd_text == '-help':
+                add_cmd['func'] = 'help_person'
+                add_cmd['time'] = msg['value']['time']
+                add_cmd['to_id'] = msg['from_user']['uin']
+                self.CommandList.append(add_cmd)
 
-            elif text == 'clean_table':
+            # 个人聊天用于测试机器人，可以删除数据表
+            elif cmd_text == 'clean_table':
                 add_cmd['func'] = 'clean_table'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['table_name'] = table
@@ -437,37 +465,47 @@ class SmartQQ(WebQQApi):
                 self.CommandList.append(add_cmd)
 
             # 添加机器人控制命令
-            elif text == 'check_group':
+            elif cmd_text == 'check_group':
                 add_cmd['func'] = 'check_group'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['to_id'] = msg['from_user']['uin']
                 self.CommandList.append(add_cmd)
 
-            elif re.match(r'^output_group_\d+$', text):
+            elif re.match(r'^output_group_\d+$', cmd_text):
                 add_cmd['func'] = 'output_group'
                 add_cmd['time'] = msg['value']['time']
-                add_cmd['g_order'] = int(re.sub(r'^output_group_', '', text))
+                add_cmd['g_order'] = int(re.sub(r'^output_group_', '', cmd_text))
                 add_cmd['to_id'] = msg['from_user']['uin']
                 self.CommandList.append(add_cmd)
 
             # 添加查看具体某个群的聊天记录
-            elif re.match(r'^check_group_\d+_count$', text):
+            elif re.match(r'^check_group_\d+_count$', cmd_text):
                 add_cmd['func'] = 'check_group_count'
                 add_cmd['time'] = msg['value']['time']
-                add_cmd['g_order'] = int(re.sub(r'^check_group_', '', text).split('_')[0])
+                add_cmd['g_order'] = int(re.sub(r'^check_group_', '', cmd_text).split('_')[0])
                 add_cmd['to_id'] = msg['from_user']['uin']
                 self.CommandList.append(add_cmd)
-            elif re.match(r'^check_group_\d+_\d+$', text):
+            elif re.match(r'^check_group_\d+_\d+$', cmd_text):
                 add_cmd['func'] = 'check_group_text'
                 add_cmd['time'] = msg['value']['time']
-                t = re.sub(r'^check_group_', '', text).split('_')
+                t = re.sub(r'^check_group_', '', cmd_text).split('_')
                 add_cmd['g_order'] = int(t[0])
                 add_cmd['msg_order'] = int(t[1])
                 add_cmd['to_id'] = msg['from_user']['uin']
                 self.CommandList.append(add_cmd)
 
+            # 添加邮箱发送
+            elif re.match(r'^send_group_\d+_\w+@\w+\.com$', cmd_text):
+                add_cmd['func'] = 'send_file_group'
+                add_cmd['time'] = msg['value']['time']
+                t = re.sub(r'^send_group_', '', cmd_text).split('_')
+                add_cmd['g_order'] = int(t[0])
+                add_cmd['email_addr'] = '_'.join(t[1:])
+                add_cmd['to_id'] = msg['from_user']['uin']
+                self.CommandList.append(add_cmd)
+
             # 机器人测试接口命令
-            elif text == 'reply_e':
+            elif cmd_text == 'reply_e':
                 add_cmd['func'] = 'test_emot'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['to_id'] = msg['from_user']['uin']
@@ -495,105 +533,119 @@ class SmartQQ(WebQQApi):
 
         elif msg['type'] == 2:
             # 群 -> 我
+            # 群的聊天已经取消了自动回复和命令，只保存聊天记录
             table = 'groupz' + trans_unicode_into_int(trans_coding(msg['from_group']['name']))
             self.msg_handler.msg_db.create_table(table, self.msg_handler.msg_col)
-            add_cmd = {}
-            add_cmd['type'] = 2
-            if text == 'check_record_count':
-                add_cmd['func'] = 'check_count'
-                add_cmd['time'] = msg['value']['time']
-                add_cmd['table_name'] = table
-                add_cmd['to_id'] = msg['from_group']['gid']
-                self.CommandList.append(add_cmd)
-            elif re.match(r'^check_record_\d+$', text):
-                add_cmd['func'] = 'check_text'
-                add_cmd['time'] = msg['value']['time']
-                add_cmd['msg_order'] = int(re.sub(r'^check_record_', '', text))
-                add_cmd['table_name'] = table
-                add_cmd['to_id'] = msg['from_group']['gid']
-                self.CommandList.append(add_cmd)
-            elif text == 'runtime':
-                add_cmd['func'] = 'check_time'
-                add_cmd['time'] = msg['value']['time']
-                add_cmd['to_id'] = msg['from_group']['gid']
-                self.CommandList.append(add_cmd)
+            # add_cmd = {}
+            # add_cmd['type'] = 2
+            # if text == 'check_record_count':
+            #     pass
+            #     add_cmd['func'] = 'check_count'
+            #     add_cmd['time'] = msg['value']['time']
+            #     add_cmd['table_name'] = table
+            #     add_cmd['to_id'] = msg['from_group']['gid']
+            #     self.CommandList.append(add_cmd)
+            # elif re.match(r'^check_record_\d+$', text):
+            #     add_cmd['func'] = 'check_text'
+            #     add_cmd['time'] = msg['value']['time']
+            #     add_cmd['msg_order'] = int(re.sub(r'^check_record_', '', text))
+            #     add_cmd['table_name'] = table
+            #     add_cmd['to_id'] = msg['from_group']['gid']
+            #     self.CommandList.append(add_cmd)
+            # elif text == 'runtime':
+            #     add_cmd['func'] = 'check_time'
+            #     add_cmd['time'] = msg['value']['time']
+            #     add_cmd['to_id'] = msg['from_group']['gid']
+            #     self.CommandList.append(add_cmd)
 
             # 在上面定义命令
-            else:
+            # else:
                 # 添加自动回复
-                add_flag = False
-                for i in msg['value']['content'][1:]:
-                    if type(i) == str:
-                        if re.match(r'^@' + self.user['nick'] + r'$', i):
-                            add_flag = True
-                            break
-                if add_flag:
-                    s = re.sub(r'@' + self.user['nick'], '', text)
-                    print s
-                    add_reply = {}
-                    add_reply['type'] = 2
-                    add_reply['text'] = s
-                    add_reply['time'] = msg['value']['time']
-                    add_reply['user'] = table
-                    add_reply['to_id'] = msg['from_group']['gid']
-                    add_reply['to_who'] = msg['from_user']['nick']
-                    self.NeedReplyList.append(add_reply)
+                # add_flag = False
+                # for i in msg['value']['content'][1:]:
+                #     if type(i) == str:
+                #         if re.match(r'^@' + self.user['nick'] + r'$', i):
+                #             add_flag = True
+                #             break
+                # if add_flag:
+                #     s = re.sub(r'@' + self.user['nick'], '', text)
+                #     add_reply = {}
+                #     add_reply['type'] = 2
+                #     add_reply['text'] = s
+                #     add_reply['time'] = msg['value']['time']
+                #     add_reply['user'] = table
+                #     add_reply['to_id'] = msg['from_group']['gid']
+                #     add_reply['to_who'] = msg['from_user']['nick']
+                #     self.NeedReplyList.append(add_reply)
 
                 # 添加储存
-                add_store = {}
-                add_store['content'] = text
-                add_store['time'] = msg['value']['time']
-                add_store['from'] = msg['from_user']['nick']
-                add_store['to'] = 'Group'
-                add_store['table_name'] = table
-                self.DBStoreMSGList.append(add_store)
+            add_store = {}
+            add_store['content'] = text
+            add_store['time'] = msg['value']['time']
+            add_store['from'] = msg['from_user']['nick']
+            add_store['to'] = 'Group'
+            add_store['table_name'] = table
+            self.DBStoreMSGList.append(add_store)
 
         elif msg['type'] == 3:
             # 讨论组 -> 我
             # 当前版本有特殊需求，故添加一些特殊功能
-            if re.match(r'^#.*$', text):  # 当发送信息以#开头时，将不对其进行存储等处理
+            if re.match(r'^\s*#.*$', text):  # 当发送信息以#开头时，将不对其进行存储等处理
                 return
             table = 'discussz' + trans_unicode_into_int(trans_coding(msg['from_discuss']['name']))
             self.msg_handler.msg_db.create_table(table, self.msg_handler.msg_col)
             add_cmd = {}
             add_cmd['type'] = 3
-            if text == 'check_record_count':
+            cmd_text = text.strip()
+            if cmd_text == 'check_record_count':
                 add_cmd['func'] = 'check_count'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['table_name'] = table
                 add_cmd['to_id'] = msg['from_discuss']['did']
                 self.CommandList.append(add_cmd)
-            elif re.match(r'^check_record_\d+$', text):
+            elif re.match(r'^check_record_\d+$', cmd_text):
                 add_cmd['func'] = 'check_text'
                 add_cmd['time'] = msg['value']['time']
-                add_cmd['msg_order'] = int(re.sub(r'^check_record_', '', text))
+                add_cmd['msg_order'] = int(re.sub(r'^check_record_', '', cmd_text))
                 add_cmd['table_name'] = table
                 add_cmd['to_id'] = msg['from_discuss']['did']
                 self.CommandList.append(add_cmd)
-            elif text == 'runtime':
+            elif cmd_text == 'runtime':
                 add_cmd['func'] = 'check_time'
+                add_cmd['time'] = msg['value']['time']
+                add_cmd['to_id'] = msg['from_discuss']['did']
+                self.CommandList.append(add_cmd)
+            elif cmd_text == '-help':
+                add_cmd['func'] = 'help_discuss'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['to_id'] = msg['from_discuss']['did']
                 self.CommandList.append(add_cmd)
 
             # 模板任务命令
-            elif text == 'output_csv':
+            elif cmd_text == 'output_csv':
                 add_cmd['func'] = 'output_csv'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['table_name'] = table
                 add_cmd['to_id'] = msg['from_discuss']['did']
                 self.CommandList.append(add_cmd)
-            elif text == 'clean_table':
+            elif cmd_text == 'clean_table':
                 add_cmd['func'] = 'clean_table'
                 add_cmd['time'] = msg['value']['time']
                 add_cmd['table_name'] = table
                 add_cmd['to_id'] = msg['from_discuss']['did']
                 self.CommandList.append(add_cmd)
-            elif re.match(r'^delete_record_\d+$', text):
+            elif re.match(r'^delete_record_\d+$', cmd_text):
                 add_cmd['func'] = 'delete_record'
                 add_cmd['time'] = msg['value']['time']
-                add_cmd['msg_order'] = int(re.sub(r'^delete_record_', '', text))
+                add_cmd['msg_order'] = int(re.sub(r'^delete_record_', '', cmd_text))
                 add_cmd['table_name'] = table
+                add_cmd['to_id'] = msg['from_discuss']['did']
+                self.CommandList.append(add_cmd)
+            elif re.match(r'^send_to_\w+@\w+\.com$', cmd_text):
+                add_cmd['func'] = 'send_file_discuss'
+                add_cmd['time'] = msg['value']['time']
+                add_cmd['table_name'] = table
+                add_cmd['email_addr'] = re.sub(r'^send_to_', '', cmd_text)
                 add_cmd['to_id'] = msg['from_discuss']['did']
                 self.CommandList.append(add_cmd)
 
@@ -608,7 +660,6 @@ class SmartQQ(WebQQApi):
                             break
                 if add_flag:
                     s = re.sub(r'@' + self.user['nick'], '', text)
-                    print s
                     add_reply = {}
                     add_reply['type'] = 3
                     add_reply['text'] = s
@@ -629,14 +680,15 @@ class SmartQQ(WebQQApi):
 
     def handle_content(self, content):
         text = ''
-        print content
+        echo(str(content) + '\n')
         for c in content:
             if type(c) == list:
+                # 尝试添加表情处理
                 text += '[表情]'
             elif type(c) == str:
                 text += c
             else:
-                print c
+                echo(str(c) + '\n')
         return text
 
     def show_msg(self, msg):

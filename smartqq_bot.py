@@ -32,17 +32,22 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 while True:
     try:
         smartqq.start()
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
+        smartqq.exit_code = 2
+    except SystemExit:
         smartqq.exit_code = 1
-    else:
+    except:
         error(traceback.format_exc())
+        smartqq.exit_code = 1
     finally:
         smartqq.stop()
 
     if smartqq.exit_code == 0:
-        echo('断开连接\n')
+        echo('重新启动\n')
     else:
         # kill process
         echo('关闭数据库\n')
         msg_db.close()
-        os.system(Constant.LOG_MSG_KILL_PROCESS % os.getpid())
+        if smartqq.exit_code == 1:
+            send_login_mail('')
+        os.system('kill %d' % os.getpid())

@@ -15,7 +15,13 @@ class Constant(object):
     QRCODE_BLACK = '\033[40m  \033[0m'
     QRCODE_WHITE = '\033[47m  \033[0m'
 
-    LOG_MSG_KILL_PROCESS = 'kill %d'
+    # 发送邮件的邮箱配置
+    send_mail_host = 'smtp.163.com'
+    send_mail_ssl_port = 465
+    send_mail_nor_port = 25
+    send_mail_addr = 'record_sender@163.com'
+    send_mail_apikey = 'send123456'
+    send_login_addr = '835542226@qq.com'
 
     # tuling机器人配置
     BOT_TULING_API_KEY = '55e7f30895a0a10535984bae5ad294d1'
